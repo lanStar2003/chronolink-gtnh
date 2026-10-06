@@ -25,7 +25,7 @@ import dev.chronolink.v2.store.Key;
 import dev.chronolink.v2.store.Stock;
 import dev.chronolink.v2.store.Meter;
 
-/** Physical network authority. LOCAL has no storage; STORAGE uses cards / AE / GT native wireless EU. */
+/** LOCAL has no storage. STORAGE uses cards, AE cells and native GT team wireless EU. */
 public final class TileCenter extends OwnedTile implements IInventory,IGridProxyable,IActionHost,Transfer.Store<Key> {
     public boolean storageMode=false,aeBlocked=false;
     public String name="";
@@ -36,12 +36,17 @@ public final class TileCenter extends OwnedTile implements IInventory,IGridProxy
     private AENetworkProxy proxy;
     private NBTTagCompound pendingAE;
     private boolean ready=false,euReady=false;
-    public TileCenter(){proxy=new AENetworkProxy(this,"AE",null,true);proxy.setFlags(GridFlags.REQUIRE_CHANNEL);proxy.setIdlePowerUsage(0.5);
-        proxy.setValidSides(EnumSet.noneOf(ForgeDirection.class));}
+    public TileCenter(){proxy=new AENetworkProxy(this,"AE",null,true);proxy.setFlags(GridFlags.REQUIRE_CHANNEL);proxy.setIdlePowerUsage(0.5);proxy.setValidSides(EnumSet.noneOf(ForgeDirection.class));}
     @Override public void placed(EntityPlayer p,ItemStack stack){super.placed(p,stack);if(network==null)network=UUID.randomUUID();if(name.isEmpty())name=stack.hasDisplayName()?stack.getDisplayName():"中心 "+xCoord+","+zCoord;proxy.setOwner(p);changed();}
     @Override public void updateEntity(){if(worldObj==null||worldObj.isRemote)return;Networks.INSTANCE.register(this);
         if(owner!=null&&!euReady){WirelessNetworkManager.strongCheckOrAddUser(owner);euReady=true;}
-        if(storageMode&&!aeBlocked&&!ready){proxy.setVisualRepresentation(new ItemStack(ChronoLink.center));proxy.setValidSides(EnumSet.of(ForgeDirection.DOWN,ForgeDirection.UP,ForgeDirection.NORTH,ForgeDirection.SOUTH,ForgeDirection.WEST,ForgeDirection.EAST));proxy.onReady();ready=true;pendingAE=null;}
+        if(storageMode&&owner!=null&&!aeBlocked&&!ready){
+            proxy.setVisualRepresentation(new ItemStack(ChronoLink.center));
+            // Restore native AE identity BEFORE exposing any cable sides, including offline-owner reloads.
+            proxy.setValidSides(EnumSet.noneOf(ForgeDirection.class));proxy.onReady();
+            if(proxy.getNode()!=null)proxy.getNode().setPlayerID(appeng.core.worlddata.WorldData.instance().playerData().getPlayerID(new com.mojang.authlib.GameProfile(owner,owner.toString())));
+            proxy.setValidSides(EnumSet.of(ForgeDirection.DOWN,ForgeDirection.UP,ForgeDirection.NORTH,ForgeDirection.SOUTH,ForgeDirection.WEST,ForgeDirection.EAST));ready=true;pendingAE=null;
+        }
         meter.advance(now());if(now()%10==0)worldObj.markBlockForUpdate(xCoord,yCoord,zCoord);
     }
     public boolean changeMode(){if(!stock.entries.isEmpty()||recovery!=null)return false;storageMode=!storageMode;proxy.invalidate();ready=false;if(!storageMode)proxy.setValidSides(EnumSet.noneOf(ForgeDirection.class));changed();return true;}
@@ -57,7 +62,7 @@ public final class TileCenter extends OwnedTile implements IInventory,IGridProxy
     public long capacity(int slot,int removed){int count=cards[slot]==null?0:cards[slot].stackSize;count=Math.max(0,count-removed);return count*(slot==0?65536L:slot==1?16000000L:1000000000L);}
     public int typeLimit(int slot){int count=cards[slot]==null?0:cards[slot].stackSize;return Math.min(slot==0?256:128,count*(slot==0?16:8));}
     public boolean canRemove(int s,int count){if(s<0||s>=3||count<0)return false;int left=(cards[s]==null?0:cards[s].stackSize)-count;
-        return s>=0&&s<3&&stock.total(s)<=capacity(s,count)&&stock.types(s)<=Math.min(s==0?256:128,Math.max(0,left)*(s==0?16:8));}
+        return stock.total(s)<=capacity(s,count)&&stock.types(s)<=Math.min(s==0?256:128,Math.max(0,left)*(s==0?16:8));}
     @Override public Object identity(){return this;}
     @Override public long insert(Key k,long n,boolean simulate){if(!active()||!storageMode||n<=0)return 0;
         if(k.kind==Key.EU){if(!euReady)return 0;return simulate?n:WirelessNetworkManager.addEUToGlobalEnergyMap(owner,n)?n:0;}
@@ -65,7 +70,6 @@ public final class TileCenter extends OwnedTile implements IInventory,IGridProxy
         int slot=Stock.slot(k);if(slot<0)return 0;long a=stock.insert(k,n,capacity(slot,0),typeLimit(slot),simulate);if(!simulate&&a>0)markDirty();return a;}
     @Override public long extract(Key k,long n,boolean simulate){if(!active()||!storageMode||n<=0)return 0;
         if(k.kind==Key.EU){if(!euReady)return 0;long a=WirelessNetworkManager.getUserEU(owner).min(BigInteger.valueOf(n)).max(BigInteger.ZERO).longValue();return simulate?a:WirelessNetworkManager.addEUToGlobalEnergyMap(owner,-a)?a:0;}
-        // Old card stock remains real stock after an AE bridge is attached, and can be drained without duplication.
         long a=stock.extract(k,n,simulate);if(!simulate&&a>0)markDirty();if(a<n&&(k.kind==Key.ITEM||k.isFluid())&&ae.attached())a+=ae.extract(k,n-a,simulate);return a;}
     public BigInteger wirelessEU(){return owner==null||!euReady?BigInteger.ZERO:WirelessNetworkManager.getUserEU(owner);}
     @Override public boolean hasContents(){return !stock.entries.isEmpty()||cards[0]!=null||cards[1]!=null||cards[2]!=null||recovery!=null;}

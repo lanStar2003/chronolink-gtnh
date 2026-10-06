@@ -31,6 +31,9 @@ public final class V2DataTests {
         check(loaded.extract(special,99,false)==12&&loaded.count(special)==0,"actual-extraction-capped");
         check(Key.read(water.write()).equals(water)&&Key.read(special.write()).equals(special),"filter-NBT-round-trip");
         Meter meter=new Meter();meter.moved(iron,10,true,100);meter.moved(water,30,false,100);check(meter.rate(0,0)==10&&meter.rate(1,1)==30,"meter-real-directions");meter.advance(120);check(meter.rate(0,0)==0,"idle-meter-expires");
+        for(int i=0;i<300;i++){ItemStack v=new ItemStack(Items.iron_ingot);v.setTagCompound(new NBTTagCompound());v.stackTagCompound.setInteger("type",i);Key key=Key.of(v);meter.moved(key,1,true,121);check(meter.rate(key,0)==1,"meter-not-permanently-limited-to-256-types");}
+        for(int i=122;i<=141;i++)meter.advance(i);check(meter.perResource.isEmpty(),"expired-per-resource-series-pruned");
+        NativeBoundaryTests.run();
         System.out.println("PASS V2 real Minecraft/Forge data contracts: "+checks+" checks. No AE grid or world initialized.");
     }
 }

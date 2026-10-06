@@ -34,11 +34,11 @@ public final class NetworkContainer extends Container {
     public void action(EntityPlayer p,int id,int rev,String text){if(!Packets.validAction(id)||tile.getWorldObj()==null||tile.getWorldObj().isRemote||p.openContainer!=this||!canInteractWith(p)||lastAction==tile.now())return;lastAction=tile.now();
         if(id>=200&&id<206){if(rev!=revision||id-200>=rows.size()||!(tile instanceof TileConduit))return;TileConduit n=(TileConduit)tile;Key k=rows.get(id-200);if(k.kind==Key.ITEM)n.itemFilters[face]=k;else if(k.isFluid())n.fluidFilters[face]=k;n.changedSettings();tab=0;}
         else if(id==10){page=Math.max(0,page-1);}
-        else if(id==11){page=Math.min(682,page+1);}
+        else if(id==11){page=Math.min(10000000,page+1);}
         else if(id==12){tab=(tab+1)%3;page=0;}
         else if(id==14){tab=0;page=0;}
         else if(id>=100&&id<106){face=id-100;}
-        else if(id==0&&tile.fault.isEmpty()){tile.enabled=!tile.enabled;tile.changed();notifyNeighbors();}
+        else if(id==0&&tile.fault.isEmpty()&&tile.recovery==null&&(!(tile instanceof TileConduit)||!tile.hasContents())){tile.enabled=!tile.enabled;tile.changed();notifyNeighbors();}
         else if(tile instanceof TileCenter){TileCenter c=(TileCenter)tile;if(id==1)c.changeMode();else if(id==15){String clean=text.replaceAll("[\\p{Cntrl}§]","").trim();if(!clean.isEmpty()){c.name=clean.substring(0,Math.min(32,clean.length()));c.changed();}}}
         else if(tile instanceof TileConduit&&tile.fault.isEmpty()){TileConduit n=(TileConduit)tile;
             if(id==2){List<TileCenter> available=Networks.INSTANCE.centers(n.owner);if(!available.isEmpty()){int found=-1;for(int i=0;i<available.size();i++)if(available.get(i).network.equals(n.network))found=i;n.network=available.get((found+1)%available.size()).network;n.enabled=false;}}
@@ -62,7 +62,8 @@ public final class NetworkContainer extends Container {
         if(stack.stackSize==0)s.putStack(null);else s.onSlotChanged();return before;}
     @Override public void addCraftingToCrafters(ICrafting listener){super.addCraftingToCrafters(listener);lastSend=Long.MIN_VALUE;}
     @Override public void detectAndSendChanges(){super.detectAndSendChanges();if(tile.getWorldObj()==null||tile.getWorldObj().isRemote||lastSend!=Long.MIN_VALUE&&tile.now()-lastSend<10)return;lastSend=tile.now();
-        NBTTagCompound n=snapshot();for(Object c:crafters)if(c instanceof EntityPlayerMP)Packets.channel.sendTo(new Packets.Snapshot(windowId,n),(EntityPlayerMP)c);}
+        NBTTagCompound n;try{n=snapshot();}catch(RuntimeException ex){tile.fail("Catalogue: "+ex.getClass().getSimpleName());n=new NBTTagCompound();n.setString("Fault",tile.fault);n.setBoolean("Center",tile instanceof TileCenter);}
+        for(Object c:crafters)if(c instanceof EntityPlayerMP)Packets.channel.sendTo(new Packets.Snapshot(windowId,n),(EntityPlayerMP)c);}
     public NBTTagCompound snapshot(){NBTTagCompound out=new NBTTagCompound();out.setInteger("Revision",++revision);out.setInteger("Face",face);out.setInteger("Tab",tab);out.setInteger("Page",page);out.setBoolean("Enabled",tile.enabled);out.setString("Fault",tile.fault);out.setBoolean("Center",tile instanceof TileCenter);
         TileCenter c=tile instanceof TileCenter?(TileCenter)tile:((TileConduit)tile).center();out.setString("Network",c==null?"未选择 / 中心未加载":c.name);out.setBoolean("Online",c!=null&&c.active());out.setBoolean("Storage",c!=null&&c.storageMode);
         rows.clear();if(c!=null){out.setInteger("Nodes",Networks.INSTANCE.members(c).size());out.setBoolean("AEAttached",c.storageMode&&c.ae.attached());out.setBoolean("AEActive",c.storageMode&&c.ae.allowed(false));

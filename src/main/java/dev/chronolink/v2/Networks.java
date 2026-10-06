@@ -12,7 +12,7 @@ import dev.chronolink.v2.core.Transfer;
 import dev.chronolink.v2.store.*;
 import dev.chronolink.v2.tile.*;
 
-/** Server-side registry and bounded scheduler. Local transfers never use an inventory in this class. */
+/** Server registry and bounded scheduler. The local route has no inventory or resource balance. */
 public final class Networks {
     public static final Networks INSTANCE=new Networks();
     private final Set<TileConduit> nodes=new LinkedHashSet<TileConduit>();
@@ -50,7 +50,7 @@ public final class Networks {
                         for(Key k:keys){if(k==null||work--<=0)continue;long moved=Transfer.move(c,b,k,n.remaining(k,false),n);record(c,n,k,moved,false);if(!n.ready())break;}
                         if(n.ready())wirelessOutput(c,n,s);
                     }
-                }n.cursor+=64;}catch(RuntimeException ex){n.fail("Native boundary: "+ex.getClass().getSimpleName());}
+                }n.cursor++;}catch(RuntimeException ex){n.fail("Native boundary: "+ex.getClass().getSimpleName());}
             }
         }finally{busy=false;}}
     private void localPush(TileConduit from,Boundary source,Key k,List<TileConduit> all){TileCenter c=center(from);int start=Math.floorMod(cursor,all.size());
@@ -65,9 +65,7 @@ public final class Networks {
             int checks=0;for(TileConduit to:members(c)){if(++checks>ModConfig.routeComparisons)break;if(!same(n,to))continue;for(int s=0;s<6&&sent<max;s++){if(!to.output(s)||!to.allows(k,s))continue;Boundary b=boundary(to,s);if(b==null||b.tile==n.endpoint(face))continue;
                     long limit=Math.min(max-sent,to.remaining(k,false));pending=limit;long accepted=Transfer.checked(b.insert(k,limit,sim),limit);pending=0;sent+=accepted;if(!sim)record(c,to,k,accepted,false);}}
             if(!sim)record(c,n,k,sent,true);return sent;
-        }catch(RuntimeException ex){n.uncertain(k,pending,sim?"simulate-offer":"passive-offer");if(!sim)record(c,n,k,sent,true);
-            // Ambiguous native mutations are quarantined, not automatically repeated or counted as successful throughput.
-            return sim?0:Math.min(max,sent+pending);
+        }catch(RuntimeException ex){n.uncertain(k,pending,sim?"simulate-offer":"passive-offer");if(!sim)record(c,n,k,sent,true);return sim?0:Math.min(max,sent+pending);
         }finally{busy=false;}}
     public long draw(TileConduit n,int side,Key k,long count,boolean sim){if(busy||k==null||count<=0||!n.output(side)||!n.allows(k,side))return 0;busy=true;
         try{TileCenter c=center(n);long max=Math.min(count,n.remaining(k,false));if(max<=0)return 0;
@@ -80,13 +78,7 @@ public final class Networks {
     public Key first(TileConduit n,int side,boolean item){if(busy||!n.output(side))return null;Key configured=item?n.itemFilters[side]:n.fluidFilters[side];if(configured!=null)return configured;
         TileCenter c=center(n);if(c==null||c.storageMode)return null;for(TileConduit source:members(c)){if(!same(n,source))continue;for(int s=0;s<6;s++){if(!source.input(s))continue;Boundary b=boundary(source,s);if(b==null||b.tile==n.endpoint(side))continue;
                 for(Key k:b.samples(source.cursor,true))if((item?k.kind==Key.ITEM:k.isFluid())&&source.allows(k,s)&&b.extract(k,1,true)>0)return k;}}return null;}
-    public Map<Key,Long> catalogue(TileCenter c,int group,int page){Map<Key,Long> out=new LinkedHashMap<Key,Long>();if(c==null||!c.active())return out;
-        if(c.storageMode){for(Map.Entry<Key,Long> e:c.stock.entries.entrySet())if(group==0?e.getKey().kind==Key.ITEM:e.getKey().isFluid())out.put(e.getKey(),e.getValue());
-            if(c.ae.attached()){Map<Key,Long> ae=c.ae.sample(0,4096,group);for(Map.Entry<Key,Long> e:ae.entrySet())out.put(e.getKey(),RelayMath.add(out.containsKey(e.getKey())?out.get(e.getKey()):0,e.getValue()));}}
-        else{Set<TileEntity> seen=new HashSet<TileEntity>();for(TileConduit source:members(c)){if(!source.ready())continue;for(int s=0;s<6;s++){if(!source.input(s))continue;Boundary b=boundary(source,s);if(b==null||!seen.add(b.tile))continue;
-                    for(Key k:b.samples(source.cursor,true)){if(group==0?k.kind!=Key.ITEM:!k.isFluid())continue;long count=b.extract(k,Integer.MAX_VALUE,true);if(count>0)out.put(k,RelayMath.add(out.containsKey(k)?out.get(k):0,count));}if(out.size()>256)break;}}}
-        return out;
-    }
+    public Map<Key,Long> catalogue(TileCenter c,int group,int page){return Catalogue.list(c,group);}
     public long offerEU(TileConduit from,int face,long voltage,long amps){if(busy||voltage<=0||voltage>(8L<<28)||amps<=0||!from.input(face))return 0;busy=true;
         long used=0,pending=0,max=0;TileCenter c=center(from);
         try{max=Math.min(amps,from.remaining(Key.EU_KEY,true));if(max<=0)return 0;
