@@ -1,0 +1,122 @@
+plugins {
+    id 'java-library'
+    id 'com.gtnewhorizons.retrofuturagradle' version '1.4.6'
+}
+
+group = 'dev.chronolink'
+version = '0.1.0-alpha.1'
+base { archivesName = 'chronolink-gtnh2.8.4' }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(8) }
+    withSourcesJar()
+}
+minecraft {
+    mcVersion.set('1.7.10')
+    username.set('ChronoLinkDev')
+}
+// RFG's 1.7.10 development target uses Forge 10.13.4.1614 and stable-12 MCP mappings.
+repositories {
+    maven { url = uri('https://nexus.gtnewhorizons.com/repository/public/') }
+    maven {
+        name = 'CurseMaven'
+        url = uri('https://cursemaven.com')
+        content { includeGroup 'curse.maven' }
+    }
+    mavenCentral()
+}
+
+// Online-only, versioned dependencies: no local Minecraft instance, no hand-written API stubs.
+// CoFH coordinate comes from GT5-Unofficial tag 5.09.51.482/dependencies.gradle.
+dependencies {
+    compileOnly('com.github.GTNewHorizons:GT5-Unofficial:5.09.51.482:dev') { transitive = false }
+    compileOnly(rfg.deobf('curse.maven:cofh-core-69162:2388751')) { transitive = false }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '1.8'
+    targetCompatibility = '1.8'
+}
+tasks.withType(Jar).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+tasks.named('jar') {
+    // Compile-only dependencies are not normally copied; exclusions are defense in depth.
+    exclude 'cofh/**', 'gregtech/**', 'net/minecraft/**', 'net/minecraftforge/**', 'cpw/**'
+    manifest { attributes('Implementation-Title':'ChronoLink','Implementation-Version':project.version,'ChronoLink-Target':'GTNH 2.8.4') }
+}
+tasks.register('coreTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.chronolink.core.CoreTests'
+    enableAssertions = true
+}
+tasks.named('check') { dependsOn tasks.named('coreTest') }
+tasks.register('verifyReleaseJar') {
+    dependsOn tasks.named('reobfJar')
+    doLast {
+        def release = file("build/libs/chronolink-gtnh2.8.4-${project.version}.jar")
+        if (!release.isFile()) throw new GradleException('Reobfuscated release JAR missing: ' + release)
+        def zip = new java.util.zip.ZipFile(release)
+        try {
+            ['mcmod.info','dev/chronolink/ChronoLink.class','assets/chronolink/lang/zh_CN.lang'].each {
+                if(zip.getEntry(it)==null) throw new GradleException('Required JAR entry missing: ' + it)
+            }
+            zip.entries().each { entry ->
+                if(entry.name ==~ /^(cofh|gregtech|net\/minecraft|net\/minecraftforge|cpw)\/.*/)
+                    throw new GradleException('Dependency/API classes accidentally packaged: ' + entry.name)
+                if(entry.name.endsWith('.class')) {
+                    def input = new java.io.DataInputStream(zip.getInputStream(entry))
+                    try { input.readInt(); input.readUnsignedShort(); if(input.readUnsignedShort()>52) throw new GradleException('Java >8 bytecode: '+entry.name) }
+                    finally { input.close() }
+                }
+            }
+        } finally { zip.close() }
+        println('Release packaging verified; actual GTNH startup/compatibility testing is still required: '+release)
+    }
+}
+
+// CI publishes only a verified reobfuscated mod, never all of build/libs or dependency jars.
+def sha256 = { File input ->
+    def digest = java.security.MessageDigest.getInstance('SHA-256')
+    input.withInputStream { stream ->
+        byte[] buffer = new byte[65536]
+        int count
+        while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+    }
+    digest.digest().collect { String.format('%02x', it & 255) }.join()
+}
+tasks.register('stageCloudArtifact') {
+    dependsOn tasks.named('check'), tasks.named('verifyReleaseJar')
+    doLast {
+        File release = file("build/libs/chronolink-gtnh2.8.4-${project.version}.jar")
+        File out = file('build/cloud-artifact')
+        delete out
+        out.mkdirs()
+        copy { from release; into out }
+        def dependencies = configurations.compileClasspath.resolvedConfiguration.resolvedArtifacts.collect {
+            [coordinate: it.moduleVersion.id.toString(), classifier: it.classifier ?: '',
+             file: it.file.name, sha256: sha256(it.file)]
+        }.sort { a, b -> (a.coordinate + a.classifier) <=> (b.coordinate + b.classifier) }
+        def evidence = [
+            mod: 'chronolink', version: project.version.toString(), target: 'GTNH 2.8.4',
+            commit: System.getenv('GITHUB_SHA') ?: 'local-unpublished',
+            runId: System.getenv('GITHUB_RUN_ID') ?: null,
+            gradle: gradle.gradleVersion,
+            buildJava: System.getProperty('java.version'),
+            compilerJava: tasks.named('compileJava').get().javaCompiler.get().metadata.languageVersion.toString(),
+            bytecodeTarget: 8,
+            fullCompile: true, coreTest: true, reobfuscation: true, packagingVerified: true,
+            gtnhStartupTested: false, inGameTransfersTested: false,
+            dependencies: dependencies
+        ]
+        file("${out}/BUILD_EVIDENCE.json").text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(evidence)) + '\n'
+        file("${out}/SHA256SUMS").text = sha256(release) + '  ' + release.name + '\n'
+        file("${out}/READ_BEFORE_INSTALL.txt").text =
+            'Alpha test build for GTNH 2.8.4 ONLY.\n' +
+            'Compiled against real dependencies, tested at core level, reobfuscated and package-checked.\n' +
+            'NOT proof of Minecraft startup, device compatibility, or save safety.\n' +
+            'Use a separate official 2.8.4 test environment before any important save.\n'
+    }
+}

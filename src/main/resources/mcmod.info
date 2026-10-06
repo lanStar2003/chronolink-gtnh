@@ -1,0 +1,11 @@
+[
+  {
+    "modid":"chronolink",
+    "name":"ChronoLink / 时枢网络",
+    "description":"Private GTNH 2.8.4 wireless item, fluid and native EU/RF transport. Alpha: integration testing required.",
+    "version":"0.1.0-alpha.1",
+    "mcversion":"1.7.10",
+    "authorList":["ChronoLink private project"],
+    "dependencies":["gregtech","CoFHCore"]
+  }
+]

@@ -1,0 +1,15 @@
+.gradle/
+.tools/
+build/
+run/
+logs/
+libs/*.jar
+*.class
+*.log
+.idea/
+*.iml
+.env
+.env.*
+__pycache__/
+*.pyc
+.gradle-java-home

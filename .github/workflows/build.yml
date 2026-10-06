@@ -1,0 +1,111 @@
+name: Build GTNH 2.8.4
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'verification/**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'verification/**'
+  workflow_dispatch:
+
+# Compilation needs no PAT, no account secrets, and no repository write permission.
+permissions:
+  contents: read
+
+concurrency:
+  group: chronolink-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core and build-script checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up build JDK
+        uses: actions/setup-java@v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Offline production-core tests and script tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification
+          bash scripts/test-core.sh
+          python3 scripts/verify_assets.py | tee verification/resource-checks.txt
+          mkdir -p build/syntax-check
+          javac -d build/syntax-check scripts/JavaSyntaxCheck.java
+          java -cp build/syntax-check JavaSyntaxCheck src/main/java src/test/java | tee verification/java-syntax.txt
+          python3 -m unittest discover -s scripts/tests -v 2>&1 | tee verification/build-script-tests.txt
+      - name: Preserve core diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: core-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            verification/core-tests.txt
+            verification/resource-checks.txt
+            verification/java-syntax.txt
+            verification/build-script-tests.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  build:
+    name: Forge compile and reobfuscated mod JAR
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install Java 8 toolchain and Java 21 build runtime
+        uses: actions/setup-java@v4.7.1
+        with:
+          distribution: temurin
+          java-version: |
+            8
+            21
+      - name: Install fixed Gradle and configure dependency cache
+        uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
+        with:
+          gradle-version: '8.8'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Record build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification
+          { java -version; gradle --version; } > verification/cloud-environment.txt 2>&1
+      - name: Compile, test, reobfuscate and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --console=plain --stacktrace clean check reobfJar stageCloudArtifact 2>&1 | tee verification/full-build-ci.log
+      - name: Upload mod only after successful validation
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: chronolink-gtnh2.8.4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/cloud-artifact/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve compiler and dependency diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: build-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            verification/full-build-ci.log
+            verification/cloud-environment.txt
+            build/reports/
+          if-no-files-found: warn
+          retention-days: 14
