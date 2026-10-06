@@ -13,7 +13,7 @@ on:
       - 'verification/**'
   workflow_dispatch:
 
-# Compilation needs no PAT, no account secrets, and no repository write permission.
+# Builds are read-only. Only the gated release job receives contents: write.
 permissions:
   contents: read
 
@@ -107,5 +107,36 @@ jobs:
             verification/full-build-ci.log
             verification/cloud-environment.txt
             build/reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: Publish verified GitHub Release
+    needs: [core, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - name: Download only this run's validated mod artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chronolink-gtnh2.8.4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-input/
+      - name: Publish versioned release and verify downloaded assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish_release.py
+      - name: Preserve release receipt
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verification/release-result.json
           if-no-files-found: warn
           retention-days: 14

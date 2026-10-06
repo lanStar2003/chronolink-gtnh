@@ -81,7 +81,9 @@ class CloudBuildTests(unittest.TestCase):
         text=(ROOT/'.github/workflows/build.yml').read_text()
         for value in ('secrets.', 'InstanceDir', 'COFH_JAR', '--scan'):
             self.assertNotIn(value,text)
-        self.assertEqual(text.count('persist-credentials: false'),2)
+        self.assertEqual(text.count('persist-credentials: false'),3)
+        self.assertIn('GH_TOKEN: ${{ github.token }}',text)
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",text)
 
     def test_artifact_own_namespace_only(self):
         text=(ROOT/'build.gradle').read_text()

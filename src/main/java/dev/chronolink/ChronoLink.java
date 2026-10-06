@@ -22,9 +22,9 @@ import dev.chronolink.transfer.NetworkHub;
 
 @Mod(modid=ChronoLink.ID,name="ChronoLink",version=ChronoLink.VERSION,
     acceptedMinecraftVersions="[1.7.10]",
-    dependencies="required-after:gregtech@[5.09.51.482];required-after:CoFHCore")
+    dependencies="required-after:gregtech;required-after:CoFHCore")
 public final class ChronoLink {
-    public static final String ID="chronolink", VERSION="0.1.0-alpha.1";
+    public static final String ID="chronolink", VERSION="0.1.0-alpha.2";
     @Mod.Instance(ID) public static ChronoLink instance;
     @SidedProxy(clientSide="dev.chronolink.client.ClientProxy",serverSide="dev.chronolink.CommonProxy")
     public static CommonProxy proxy;
@@ -33,6 +33,9 @@ public final class ChronoLink {
     public static Item binder;
     @Mod.EventHandler public void preInit(FMLPreInitializationEvent event) {
         log=event.getModLog();
+        String gtBuild=RuntimeCompatibility.requireSupportedGregTech(ChronoLink.class.getClassLoader());
+        log.info("GregTech compatibility: artifact build {}, FML version {}", gtBuild,
+            cpw.mods.fml.common.Loader.instance().getIndexedModList().get("gregtech").getVersion());
         ModConfig.load(event.getSuggestedConfigurationFile());
         connector=new BlockConnector(); binder=new ItemBinder();
         GameRegistry.registerBlock(connector,ItemBlockConnector.class,"connector");
