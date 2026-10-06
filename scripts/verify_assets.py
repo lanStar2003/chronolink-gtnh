@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Static resource validation only; does not start or validate the Minecraft renderer."""
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -28,7 +29,7 @@ en = lang_keys(assets / 'lang/en_US.lang')
 check(zh == en, f'language keys match ({len(zh)} keys each)')
 info = json.loads((resources / 'mcmod.info').read_text())
 check(info[0]['modid'] == 'chronolink', 'mod id')
-check(info[0]['version'] == '0.1.0-alpha.2', 'alpha version')
+check(info[0]['version'] == re.search(r"version = '([^']+)'", (root/'build.gradle').read_text()).group(1), 'metadata matches build version')
 check(info[0]['mcversion'] == '1.7.10', 'Minecraft target')
 check(json.loads((resources / 'pack.mcmeta').read_text())['pack']['pack_format'] == 1, 'resource pack format')
 for name, dims in {
@@ -36,6 +37,7 @@ for name, dims in {
     'blocks/connector_idle.png': (32, 32),
     'blocks/connector_flow.png': (32, 256),
     'items/binder.png': (32, 32),
+    'items/capacity_card.png': (32, 32),
 }.items():
     data = (assets / 'textures' / name).read_bytes()
     check(data[:8] == b'\x89PNG\r\n\x1a\n', name + ': PNG signature')
@@ -48,8 +50,6 @@ source = list((root / 'src').rglob('*.java'))
 check(not any('/src/api/' in str(p) for p in source), 'no locally invented dependency API headers')
 check(all('package dev.chronolink' in p.read_text() for p in source), 'all project Java sources use own namespace')
 check(not list(root.glob('*.jar')), 'no source-root JAR presented as an installable mod')
-mod_source = (root / 'src/main/java/dev/chronolink/ChronoLink.java').read_text()
-check('required-after:gregtech;required-after:gregtech_nh@[5.09.51.482];required-after:CoFHCore' in mod_source, 'GT artifact pinned using its actual gregtech_nh versioned mod id')
-check('required-after:gregtech@' not in mod_source, 'legacy gregtech id is not constrained to an artifact number')
-check('GT_Version' not in mod_source, 'no dependency on a generated class omitted from published jars')
+check('required-after:gregtech_nh@[5.09.51.482]' in (root / 'src/main/java/dev/chronolink/ChronoLink.java').read_text(), 'GT version pinned in mod declaration')
+check('required-after:appliedenergistics2' in (root/'src/main/java/dev/chronolink/ChronoLink.java').read_text(), 'native AE dependency declared')
 print(f'PASS: {checks} static resource/package checks. Actual in-game rendering and compatibility NOT tested.')

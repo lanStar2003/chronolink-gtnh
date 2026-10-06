@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'dev.chronolink'
-version = '0.1.0-alpha.2'
+version = '0.2.0-alpha.1'
 base { archivesName = 'chronolink-gtnh2.8.4' }
 
 java {
@@ -15,7 +15,6 @@ minecraft {
     mcVersion.set('1.7.10')
     username.set('ChronoLinkDev')
 }
-// RFG's 1.7.10 development target uses Forge 10.13.4.1614 and stable-12 MCP mappings.
 repositories {
     maven { url = uri('https://nexus.gtnewhorizons.com/repository/public/') }
     maven {
@@ -26,11 +25,11 @@ repositories {
     mavenCentral()
 }
 
-// Online-only, versioned dependencies: no local Minecraft instance, no hand-written API stubs.
-// CoFH coordinate comes from GT5-Unofficial tag 5.09.51.482/dependencies.gradle.
+// Real fixed dependencies, never locally invented substitute APIs.
 configurations { gtRuntimeProbe }
 dependencies {
     gtRuntimeProbe('com.github.GTNewHorizons:GT5-Unofficial:5.09.51.482') { transitive = false }
+    compileOnly('com.github.GTNewHorizons:Applied-Energistics-2-Unofficial:rv3-beta-695-GTNH:dev') { transitive = false }
     compileOnly('com.github.GTNewHorizons:GT5-Unofficial:5.09.51.482:dev') { transitive = false }
     compileOnly(rfg.deobf('curse.maven:cofh-core-69162:2388751')) { transitive = false }
 }
@@ -44,8 +43,7 @@ tasks.withType(Jar).configureEach {
     reproducibleFileOrder = true
 }
 tasks.named('jar') {
-    // Compile-only dependencies are not normally copied; exclusions are defense in depth.
-    exclude 'cofh/**', 'gregtech/**', 'net/minecraft/**', 'net/minecraftforge/**', 'cpw/**'
+    exclude 'cofh/**', 'gregtech/**', 'net/minecraft/**', 'net/minecraftforge/**', 'cpw/**', 'appeng/**'
     manifest { attributes('Implementation-Title':'ChronoLink','Implementation-Version':project.version,'ChronoLink-Target':'GTNH 2.8.4') }
 }
 tasks.register('coreTest', JavaExec) {
@@ -59,17 +57,43 @@ tasks.register('loaderContractTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.chronolink.compat.LoaderCompatibilityTests'
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+    systemProperty 'chronolink.expectedVersion', project.version.toString()
     doFirst {
         def dev = configurations.compileClasspath.resolvedConfiguration.resolvedArtifacts.find {
             it.moduleVersion.id.name == 'GT5-Unofficial' && it.classifier == 'dev'
         }
-        if (dev == null) throw new GradleException('Pinned real GT dev artifact missing')
+        if(dev == null) throw new GradleException('Pinned real GT dev artifact missing')
         args = [dev.file.absolutePath, configurations.gtRuntimeProbe.singleFile.absolutePath,
             file("build/libs/chronolink-gtnh2.8.4-${project.version}.jar").absolutePath,
             file('build/reports/loader-contract.txt').absolutePath]
     }
 }
-tasks.named('check') { dependsOn tasks.named('coreTest'), tasks.named('loaderContractTest') }
+tasks.register('networkCoreTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.chronolink.v2.V2CoreTests'
+    enableAssertions = true
+}
+tasks.register('networkDataTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.chronolink.v2.V2DataTests'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+    enableAssertions = true
+}
+tasks.register('networkApiTest', JavaExec) {
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.chronolink.v2.ApiContractTests'
+    doFirst {
+        def artifacts = configurations.compileClasspath.resolvedConfiguration.resolvedArtifacts
+        def gt = artifacts.find { it.moduleVersion.id.name == 'GT5-Unofficial' && it.classifier == 'dev' }
+        def ae = artifacts.find { it.moduleVersion.id.name == 'Applied-Energistics-2-Unofficial' && it.classifier == 'dev' }
+        if(gt == null || ae == null) throw new GradleException('Pinned actual protocol dependencies missing')
+        args = [gt.file.absolutePath,ae.file.absolutePath]
+    }
+}
+tasks.named('check') { dependsOn tasks.named('coreTest'), tasks.named('loaderContractTest'), tasks.named('networkCoreTest'), tasks.named('networkDataTest'), tasks.named('networkApiTest') }
 tasks.register('verifyReleaseJar') {
     dependsOn tasks.named('reobfJar')
     doLast {
@@ -81,7 +105,7 @@ tasks.register('verifyReleaseJar') {
                 if(zip.getEntry(it)==null) throw new GradleException('Required JAR entry missing: ' + it)
             }
             zip.entries().each { entry ->
-                if(entry.name ==~ /^(cofh|gregtech|net\/minecraft|net\/minecraftforge|cpw)\/.*/)
+                if(entry.name ==~ /^(appeng|cofh|gregtech|net\/minecraft|net\/minecraftforge|cpw)\/.*/)
                     throw new GradleException('Dependency/API classes accidentally packaged: ' + entry.name)
                 if(entry.name.endsWith('.class')) {
                     def input = new java.io.DataInputStream(zip.getInputStream(entry))
@@ -94,7 +118,6 @@ tasks.register('verifyReleaseJar') {
     }
 }
 
-// CI publishes only a verified reobfuscated mod, never all of build/libs or dependency jars.
 def sha256 = { File input ->
     def digest = java.security.MessageDigest.getInstance('SHA-256')
     input.withInputStream { stream ->
@@ -126,9 +149,11 @@ tasks.register('stageCloudArtifact') {
             compilerJava: tasks.named('compileJava').get().javaCompiler.get().metadata.languageVersion.toString(),
             bytecodeTarget: 8,
             fullCompile: true, coreTest: true, reobfuscation: true, packagingVerified: true,
-            runtimeDependencyChecked: true, gregtechFmlVersion: 'MC1710',
-            gregtechRuntimeBuild: '5.09.51.482',
+            runtimeDependencyChecked: true, gregtechFmlVersion: 'MC1710', gregtechRuntimeBuild: '5.09.51.482',
             runtimeProbeSha256: sha256(configurations.gtRuntimeProbe.singleFile),
+            networkCoreTest: true, networkDataTest: true, networkApiTest: true,
+            previousAlpha2UserReportedWorking: true, thisVersionUserTested: false,
+            aeCompileTarget: 'rv3-beta-695-GTNH',
             gtnhStartupTested: false, inGameTransfersTested: false,
             dependencies: dependencies
         ]

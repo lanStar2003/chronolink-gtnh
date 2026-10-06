@@ -13,7 +13,6 @@ on:
       - 'verification/**'
   workflow_dispatch:
 
-# Builds are read-only. Only the gated release job receives contents: write.
 permissions:
   contents: read
 
@@ -41,6 +40,7 @@ jobs:
           set -euo pipefail
           mkdir -p verification
           bash scripts/test-core.sh
+          bash scripts/test-network-core.sh
           python3 scripts/verify_assets.py | tee verification/resource-checks.txt
           mkdir -p build/syntax-check
           javac -d build/syntax-check scripts/JavaSyntaxCheck.java
@@ -53,6 +53,7 @@ jobs:
           name: core-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             verification/core-tests.txt
+            verification/network-core-tests.txt
             verification/resource-checks.txt
             verification/java-syntax.txt
             verification/build-script-tests.txt

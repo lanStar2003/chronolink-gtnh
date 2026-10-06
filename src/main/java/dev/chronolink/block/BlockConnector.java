@@ -28,11 +28,9 @@ public final class BlockConnector extends BlockContainer {
         setHardness(2.0F); setResistance(6000000F); setStepSound(soundTypeMetal);
         setHarvestLevel("pickaxe",1);
     }
-    @Override public int getRenderType() { return 0; } // ordinary block renderer, not a missing TESR
+    @Override public int getRenderType() { return 0; }
     @Override public TileEntity createNewTileEntity(World world,int metadata) { return new TileConnector(); }
-    @Override public int onBlockPlaced(World world,int x,int y,int z,int side,float hx,float hy,float hz,int meta) {
-        return side^1; // port faces the block the player attached it to
-    }
+    @Override public int onBlockPlaced(World world,int x,int y,int z,int side,float hx,float hy,float hz,int meta) {return side^1;}
     @Override public void onBlockPlacedBy(World world,int x,int y,int z,EntityLivingBase placer,ItemStack stack) {
         if(world.isRemote || !(placer instanceof EntityPlayer)) return;
         TileEntity raw=world.getTileEntity(x,y,z);
@@ -42,16 +40,26 @@ public final class BlockConnector extends BlockContainer {
             tile.readPortable(stack.getTagCompound().getCompoundTag("ChronoLinkData"));
         else tile.owner=((EntityPlayer)placer).getUniqueID();
         tile.settings.face=world.getBlockMetadata(x,y,z)%6;
-        tile.settings.enabled=false;
-        tile.changed();
+        tile.settings.enabled=false;tile.changed();
     }
     @Override public boolean onBlockActivated(World world,int x,int y,int z,EntityPlayer player,int side,float hx,float hy,float hz) {
-        // Let the binding tool's onItemUse handle its own operation.
         if(player.getHeldItem()!=null && player.getHeldItem().getItem()==ChronoLink.binder) return false;
         if(!world.isRemote) {
             TileEntity raw=world.getTileEntity(x,y,z);
-            if(raw instanceof TileConnector && ((TileConnector)raw).mayEdit(player))
-                player.openGui(ChronoLink.instance,0,world,x,y,z);
+            if(raw instanceof TileConnector && ((TileConnector)raw).mayEdit(player)) {
+                TileConnector old=(TileConnector)raw;
+                if(player.isSneaking()&&!old.hasPayload()) {
+                    world.setBlock(x,y,z,ChronoLink.conduit,0,3);
+                    TileEntity replacement=world.getTileEntity(x,y,z);
+                    if(replacement instanceof dev.chronolink.v2.tile.TileConduit) {
+                        dev.chronolink.v2.tile.TileConduit node=(dev.chronolink.v2.tile.TileConduit)replacement;
+                        node.owner=old.owner;node.enabled=false;
+                        java.util.Arrays.fill(node.modes,old.settings.importing?1:2);
+                        dev.chronolink.v2.Networks.INSTANCE.register(node);
+                        dev.chronolink.v2.Networks.INSTANCE.autoBind(node);node.scan();node.changed();
+                    }
+                } else player.openGui(ChronoLink.instance,0,world,x,y,z);
+            }
         }
         return true;
     }
@@ -62,42 +70,28 @@ public final class BlockConnector extends BlockContainer {
             if(!world.isRemote && !tile.mayEdit(player)) return false;
             if(player.capabilities.isCreativeMode && tile.hasPayload()) return false;
         }
-        if(willHarvest) return true; // Keep NBT until harvestBlock/getDrops has captured it.
+        if(willHarvest) return true;
         return super.removedByPlayer(world,player,x,y,z,false);
     }
     @Override public void harvestBlock(World world,EntityPlayer player,int x,int y,int z,int meta) {
-        super.harvestBlock(world,player,x,y,z,meta);
-        world.setBlockToAir(x,y,z);
+        super.harvestBlock(world,player,x,y,z,meta);world.setBlockToAir(x,y,z);
     }
     @Override public ArrayList<ItemStack> getDrops(World world,int x,int y,int z,int meta,int fortune) {
-        ArrayList<ItemStack> drops=new ArrayList<ItemStack>();
-        ItemStack stack=new ItemStack(this);
-        TileEntity raw=world.getTileEntity(x,y,z);
-        if(raw instanceof TileConnector) ((TileConnector)raw).writeIntoItem(stack);
+        ArrayList<ItemStack> drops=new ArrayList<ItemStack>();ItemStack stack=new ItemStack(this);
+        TileEntity raw=world.getTileEntity(x,y,z);if(raw instanceof TileConnector) ((TileConnector)raw).writeIntoItem(stack);
         drops.add(stack); return drops;
     }
     @Override public boolean canSilkHarvest(World world,EntityPlayer player,int x,int y,int z,int metadata) { return false; }
-    @Override public ItemStack getPickBlock(MovingObjectPosition target,World world,int x,int y,int z,EntityPlayer player) {
-        return new ItemStack(this); // never copy stored resources with creative pick block
-    }
+    @Override public ItemStack getPickBlock(MovingObjectPosition target,World world,int x,int y,int z,EntityPlayer player) {return new ItemStack(this);}
     @SideOnly(Side.CLIENT) @Override public void registerBlockIcons(IIconRegister register) {
-        shell=register.registerIcon("chronolink:connector_shell");
-        idle=register.registerIcon("chronolink:connector_idle");
-        flow=register.registerIcon("chronolink:connector_flow");
+        shell=register.registerIcon("chronolink:connector_shell");idle=register.registerIcon("chronolink:connector_idle");flow=register.registerIcon("chronolink:connector_flow");
     }
     @SideOnly(Side.CLIENT) @Override public IIcon getIcon(int side,int meta) { return side==(meta%6)?idle:shell; }
     @SideOnly(Side.CLIENT) @Override public IIcon getIcon(IBlockAccess world,int x,int y,int z,int side) {
-        TileEntity raw=world.getTileEntity(x,y,z);
-        if(raw instanceof TileConnector) {
-            TileConnector tile=(TileConnector)raw;
-            if(side==tile.settings.face) return tile.clientFlow?flow:idle;
-        }
-        return shell;
+        TileEntity raw=world.getTileEntity(x,y,z);if(raw instanceof TileConnector) {TileConnector tile=(TileConnector)raw;if(side==tile.settings.face) return tile.clientFlow?flow:idle;}return shell;
     }
     @SideOnly(Side.CLIENT) @Override public void randomDisplayTick(World world,int x,int y,int z,Random random) {
-        if(!ModConfig.particles || random.nextInt(4)!=0) return;
-        TileEntity raw=world.getTileEntity(x,y,z);
-        if(raw instanceof TileConnector && ((TileConnector)raw).clientFlow)
-            world.spawnParticle("reddust",x+0.5,y+1.02,z+0.5,0.10,0.75,0.95);
+        if(!ModConfig.particles || random.nextInt(4)!=0) return;TileEntity raw=world.getTileEntity(x,y,z);
+        if(raw instanceof TileConnector && ((TileConnector)raw).clientFlow)world.spawnParticle("reddust",x+0.5,y+1.02,z+0.5,0.10,0.75,0.95);
     }
 }
