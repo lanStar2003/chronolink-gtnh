@@ -6,7 +6,6 @@ plugins {
 group = 'dev.chronolink'
 version = '0.2.0-alpha.1'
 base { archivesName = 'chronolink-gtnh2.8.4' }
-
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(8) }
     withSourcesJar()
@@ -24,8 +23,6 @@ repositories {
     }
     mavenCentral()
 }
-
-// Real fixed dependencies, never locally invented substitute APIs.
 configurations { gtRuntimeProbe }
 dependencies {
     gtRuntimeProbe('com.github.GTNewHorizons:GT5-Unofficial:5.09.51.482') { transitive = false }
@@ -44,7 +41,7 @@ tasks.withType(Jar).configureEach {
     reproducibleFileOrder = true
 }
 tasks.named('jar') {
-    exclude 'cofh/**', 'gregtech/**', 'net/minecraft/**', 'net/minecraftforge/**', 'cpw/**', 'appeng/**'
+    exclude 'cofh/**', 'gregtech/**', 'net/minecraft/**', 'net/minecraftforge/**', 'cpw/**', 'appeng/**', 'com/gtnewhorizon/gtnhlib/**'
     manifest { attributes('Implementation-Title':'ChronoLink','Implementation-Version':project.version,'ChronoLink-Target':'GTNH 2.8.4') }
 }
 tasks.register('coreTest', JavaExec) {
@@ -77,9 +74,10 @@ tasks.register('networkCoreTest', JavaExec) {
 }
 tasks.register('networkDataTest', JavaExec) {
     dependsOn tasks.named('testClasses')
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.chronolink.v2.V2DataTests'
+    classpath = sourceSets.test.runtimeClasspath + configurations.compileClasspath
+    mainClass = 'dev.chronolink.v2.ForgeTestBootstrap'
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(8) }
+    maxHeapSize = '1g'
     enableAssertions = true
 }
 tasks.register('networkApiTest', JavaExec) {
@@ -102,11 +100,13 @@ tasks.register('verifyReleaseJar') {
         if (!release.isFile()) throw new GradleException('Reobfuscated release JAR missing: ' + release)
         def zip = new java.util.zip.ZipFile(release)
         try {
-            ['mcmod.info','dev/chronolink/ChronoLink.class','assets/chronolink/lang/zh_CN.lang'].each {
+            ['mcmod.info','dev/chronolink/ChronoLink.class','dev/chronolink/v2/tile/TileCenter.class',
+             'dev/chronolink/v2/tile/TileConduit.class','dev/chronolink/v2/compat/AEBridge.class',
+             'assets/chronolink/lang/zh_CN.lang','assets/chronolink/textures/items/capacity_card.png'].each {
                 if(zip.getEntry(it)==null) throw new GradleException('Required JAR entry missing: ' + it)
             }
             zip.entries().each { entry ->
-                if(entry.name ==~ /^(appeng|cofh|gregtech|net\/minecraft|net\/minecraftforge|cpw)\/.*/)
+                if(entry.name ==~ /^(appeng|cofh|gregtech|net\/minecraft|net\/minecraftforge|cpw|com\/gtnewhorizon\/gtnhlib)\/.*/)
                     throw new GradleException('Dependency/API classes accidentally packaged: ' + entry.name)
                 if(entry.name.endsWith('.class')) {
                     def input = new java.io.DataInputStream(zip.getInputStream(entry))
@@ -153,6 +153,7 @@ tasks.register('stageCloudArtifact') {
             runtimeDependencyChecked: true, gregtechFmlVersion: 'MC1710', gregtechRuntimeBuild: '5.09.51.482',
             runtimeProbeSha256: sha256(configurations.gtRuntimeProbe.singleFile),
             networkCoreTest: true, networkDataTest: true, networkApiTest: true,
+            nativeContainerContractTests: true,
             previousAlpha2UserReportedWorking: true, thisVersionUserTested: false,
             aeCompileTarget: 'rv3-beta-695-GTNH',
             gtnhStartupTested: false, inGameTransfersTested: false,
@@ -162,8 +163,8 @@ tasks.register('stageCloudArtifact') {
         file("${out}/SHA256SUMS").text = sha256(release) + '  ' + release.name + '\n'
         file("${out}/READ_BEFORE_INSTALL.txt").text =
             'Alpha test build for GTNH 2.8.4 ONLY.\n' +
-            'Compiled against real dependencies, tested at core level, reobfuscated and package-checked.\n' +
-            'NOT proof of Minecraft startup, device compatibility, or save safety.\n' +
-            'Use a separate official 2.8.4 test environment before any important save.\n'
+            'Real dependencies, loader and native-container contracts, reobfuscation and package checks.\n' +
+            'NOT proof of Minecraft startup, AE/GT grid behavior, or save safety.\n' +
+            'Replace the old ChronoLink JAR; preserve a backup before upgrading saved worlds.\n'
     }
 }
