@@ -1,8 +1,6 @@
 package dev.chronolink.compat;
 
 import java.io.InputStream;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,9 +15,8 @@ import org.objectweb.asm.Opcodes;
 import cpw.mods.fml.common.versioning.ArtifactVersion;
 import cpw.mods.fml.common.versioning.DefaultArtifactVersion;
 import cpw.mods.fml.common.versioning.VersionParser;
-import dev.chronolink.RuntimeCompatibility;
 
-/** Headless dependency-contract regression, NOT a full Minecraft startup test. */
+/** Reads real published JARs and uses the real Forge parser; not a game startup test. */
 public final class LoaderCompatibilityTests {
     private static final StringBuilder report = new StringBuilder();
     private static int checks;
@@ -50,55 +47,47 @@ public final class LoaderCompatibilityTests {
         return values;
     }
 
-    private static String realBuild(Path upstream, Path shippedMod) throws Exception {
-        // Load just the shipped version guard and GT's generated version class.
-        // No GT machines, Minecraft world, class initializer or API stubs are emulated.
-        URL[] urls = {shippedMod.toUri().toURL(), upstream.toUri().toURL()};
-        try (URLClassLoader isolated = new URLClassLoader(urls, null)) {
-            Class<?> guard = Class.forName("dev.chronolink.RuntimeCompatibility", true, isolated);
-            return (String) guard.getMethod("requireSupportedGregTech", ClassLoader.class)
-                .invoke(null, isolated);
-        }
-    }
-
     public static void main(String[] args) throws Exception {
         if (args.length != 4) throw new IllegalArgumentException("devGT runtimeGT reobfMod reportPath");
         Path dev = Paths.get(args[0]), runtime = Paths.get(args[1]), mod = Paths.get(args[2]);
         Map<String, String> gt = annotation(runtime, "gregtech/GTMod.class");
+        Map<String, String> nh = annotation(runtime, "gregtech/GTNHMod.class");
+        Map<String, String> nhDev = annotation(dev, "gregtech/GTNHMod.class");
         Map<String, String> ours = annotation(mod, "dev/chronolink/ChronoLink.class");
-        String fmlVersion = gt.get("version");
         report.append("Upstream artifact: GT5-Unofficial 5.09.51.482\n")
-            .append("Actual upstream @Mod version: ").append(fmlVersion).append('\n')
+            .append("Actual gregtech @Mod version: ").append(gt.get("version")).append('\n')
+            .append("Actual gregtech_nh @Mod version: ").append(nh.get("version")).append('\n')
             .append("Actual shipped dependencies: ").append(ours.get("dependencies")).append('\n');
-        check("gregtech".equals(gt.get("modid")), "upstream-mod-id");
-        check("MC1710".equals(fmlVersion), "real-GT-runtime-uses-MC1710-FML-label");
-        check(RuntimeCompatibility.EXPECTED_GT_BUILD.equals(realBuild(dev, mod)), "shipped-guard-accepts-real-dev-artifact");
-        check(RuntimeCompatibility.EXPECTED_GT_BUILD.equals(realBuild(runtime, mod)), "shipped-guard-accepts-real-runtime-artifact");
-        ArtifactVersion installed = new DefaultArtifactVersion("gregtech", fmlVersion);
+        check("gregtech".equals(gt.get("modid")), "upstream-legacy-mod-id");
+        check("MC1710".equals(gt.get("version")), "real-runtime-legacy-FML-version-is-MC1710");
+        check("gregtech_nh".equals(nh.get("modid")), "upstream-versioned-GTNH-mod-id");
+        check("5.09.51.482".equals(nh.get("version")), "real-runtime-GTNH-build-version");
+        check(nh.get("version").equals(nhDev.get("version")), "real-dev-and-runtime-versions-match");
+        ArtifactVersion installed = new DefaultArtifactVersion("gregtech", gt.get("version"));
         check(!VersionParser.parseVersionReference("gregtech@[5.09.51.482]").containsVersion(installed),
             "reproduce-alpha1-rejection-with-real-FML-parser");
         check("chronolink".equals(ours.get("modid")), "shipped-mod-id");
         check("0.1.0-alpha.2".equals(ours.get("version")), "shipped-hotfix-version");
         String dependencies = ours.get("dependencies");
-        check("required-after:gregtech;required-after:CoFHCore".equals(dependencies), "both-required-dependencies-retained");
-        boolean found = false;
+        check("required-after:gregtech;required-after:gregtech_nh@[5.09.51.482];required-after:CoFHCore".equals(dependencies),
+            "all-required-dependencies-retained-and-version-bound-to-correct-id");
+        Map<String, ArtifactVersion> requirements = new LinkedHashMap<String, ArtifactVersion>();
         for (String dependency : dependencies.split(";")) {
-            if (dependency.startsWith("required-after:gregtech")) {
-                found = true;
-                ArtifactVersion requirement = VersionParser.parseVersionReference(dependency.substring("required-after:".length()));
-                check(requirement.containsVersion(installed), "shipped-JAR-passes-real-FML-GT-version-check");
-                check(!requirement.containsVersion(new DefaultArtifactVersion("not-gregtech", "MC1710")), "different-mod-id-is-not-accepted");
-            }
+            check(dependency.startsWith("required-after:"), "dependency-is-required-and-ordered-" + dependency);
+            ArtifactVersion requirement = VersionParser.parseVersionReference(dependency.substring("required-after:".length()));
+            requirements.put(requirement.getLabel(), requirement);
         }
-        check(found, "GT-is-still-required-before-ChronoLink");
+        check(requirements.get("gregtech").containsVersion(installed), "shipped-JAR-accepts-real-legacy-GT-version");
+        ArtifactVersion nhRequirement = requirements.get("gregtech_nh");
+        check(nhRequirement.containsVersion(new DefaultArtifactVersion("gregtech_nh", nh.get("version"))),
+            "shipped-JAR-accepts-real-GTNH-runtime-build");
+        check(!nhRequirement.containsVersion(new DefaultArtifactVersion("gregtech_nh", "5.09.51.483")), "later-GT-build-rejected");
+        check(!nhRequirement.containsVersion(new DefaultArtifactVersion("gregtech_nh", "5.09.51.481")), "earlier-GT-build-rejected");
+        check(!nhRequirement.containsVersion(installed), "legacy-id-cannot-substitute-for-GTNH-id");
+        check(requirements.containsKey("CoFHCore"), "CoFHCore-still-required");
         ArtifactVersion mc = VersionParser.parseVersionReference("Minecraft@" + ours.get("acceptedMinecraftVersions"));
         check(mc.containsVersion(new DefaultArtifactVersion("Minecraft", "1.7.10")), "Minecraft-1.7.10-accepted");
         check(!mc.containsVersion(new DefaultArtifactVersion("Minecraft", "1.12.2")), "other-Minecraft-version-rejected");
-        check(RuntimeCompatibility.supportsBuild("5.09.51.482"), "exact-GT-artifact-accepted");
-        check(!RuntimeCompatibility.supportsBuild("5.09.51.483"), "later-GT-artifact-rejected");
-        check(!RuntimeCompatibility.supportsBuild("5.09.51.481"), "earlier-GT-artifact-rejected");
-        check(!RuntimeCompatibility.supportsBuild("MC1710"), "FML-label-not-mistaken-for-build-marker");
-        check(!RuntimeCompatibility.supportsBuild(null), "missing-build-marker-rejected");
         report.append("RESULT: ").append(checks).append(" loader-contract checks passed.\n")
             .append("Full GTNH startup, world loading and device transfers NOT tested.\n");
         Path output = Paths.get(args[3]);
