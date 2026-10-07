@@ -20,8 +20,12 @@ public final class Boundary implements Transfer.Store<Key> {
     public final ForgeDirection side;
     public Boundary(TileEntity tile,ForgeDirection side){this.tile=tile;this.side=side;}
     @Override public Object identity(){return tile;}
-    private int[] slots(){IInventory i=(IInventory)tile;if(i instanceof ISidedInventory)return ((ISidedInventory)i).getAccessibleSlotsFromSide(side.ordinal());
-        int size=Math.min(65536,Math.max(0,i.getSizeInventory()));int[] a=new int[size];for(int s=0;s<size;s++)a[s]=s;return a;}
+    private int[] slots(){IInventory inventory=(IInventory)tile;int size=Math.min(65536,Math.max(0,inventory.getSizeInventory()));
+        if(inventory instanceof ISidedInventory){int[] raw=((ISidedInventory)inventory).getAccessibleSlotsFromSide(side.ordinal());
+            if(raw==null)return new int[0];java.util.LinkedHashSet<Integer> unique=new java.util.LinkedHashSet<Integer>();
+            for(int j=0;j<Math.min(raw.length,65536);j++)if(raw[j]>=0&&raw[j]<size)unique.add(raw[j]);
+            int[] slots=new int[unique.size()];int i=0;for(int slot:unique)slots[i++]=slot;return slots;}
+        int[] slots=new int[size];for(int i=0;i<size;i++)slots[i]=i;return slots;}
     private boolean valid(int slot){return slot>=0&&slot<((IInventory)tile).getSizeInventory();}
     private boolean canIn(int s,ItemStack st){IInventory i=(IInventory)tile;return valid(s)&&i.isItemValidForSlot(s,st)&&(!(i instanceof ISidedInventory)||((ISidedInventory)i).canInsertItem(s,st,side.ordinal()));}
     private boolean canOut(int s,ItemStack st){return valid(s)&&(!(tile instanceof ISidedInventory)||((ISidedInventory)tile).canExtractItem(s,st,side.ordinal()));}

@@ -33,7 +33,7 @@ public final class Networks {
         if(c.getWorldObj()!=n.getWorldObj())continue;double d=n.getDistanceFrom(c.xCoord+.5,c.yCoord+.5,c.zCoord+.5);if(d<best){best=d;chosen=c;}}
         if(chosen!=null){n.network=chosen.network;n.changed();return;}
         for(int s=0;s<6;s++){TileEntity raw=n.neighbor(s);if(raw instanceof TileConduit){TileConduit other=(TileConduit)raw;if(n.owner!=null&&n.owner.equals(other.owner)&&other.network!=null){n.network=other.network;n.changed();return;}}}}
-    private boolean same(TileConduit a,TileConduit b){return b!=a&&b.ready()&&a.network!=null&&a.network.equals(b.network)&&a.owner.equals(b.owner);}
+    private boolean same(TileConduit a,TileConduit b){return b.ready()&&a.network!=null&&a.network.equals(b.network)&&a.owner.equals(b.owner);}
     private void record(TileCenter c,TileConduit n,Key k,long amount,boolean input){if(amount<=0)return;n.spent(k,amount,input);c.lastMovement=c.now();c.meter.moved(k,amount,input,c.now());}
     private static Boundary boundary(TileConduit n,int face){TileEntity raw=n.endpoint(face);return raw==null?null:new Boundary(raw,ForgeDirection.getOrientation(face).getOpposite());}
     @SubscribeEvent public void tick(TickEvent.ServerTickEvent e){if(e.phase!=TickEvent.Phase.END)return;
@@ -46,7 +46,7 @@ public final class Networks {
                     if(n.modes[s]==TileConduit.IN){for(Key k:b.samples(n.cursor,n.now()%5==0)){if(work--<=0)break;if(!n.allows(k,s)||n.remaining(k,true)<=0)continue;
                             if(c.storageMode){long moved=Transfer.move(b,c,k,n.remaining(k,true),n);record(c,n,k,moved,true);}
                             else localPush(n,b,k,all);if(!n.ready())break;}}
-                    else if(n.modes[s]==TileConduit.OUT&&c.storageMode){Key[] keys={n.now()%5==0?n.itemFilters[s]:null,n.fluidFilters[s],Key.RF_KEY};
+                    else if(n.modes[s]==TileConduit.OUT&&c.storageMode){List<Key> keys=n.outputKeys(s,n.now()%5==0);
                         for(Key k:keys){if(k==null||work--<=0)continue;long moved=Transfer.move(c,b,k,n.remaining(k,false),n);record(c,n,k,moved,false);if(!n.ready())break;}
                         if(n.ready())wirelessOutput(c,n,s);
                     }
@@ -70,13 +70,18 @@ public final class Networks {
     public long draw(TileConduit n,int side,Key k,long count,boolean sim){if(busy||k==null||count<=0||!n.output(side)||!n.allows(k,side))return 0;busy=true;
         try{TileCenter c=center(n);long max=Math.min(count,n.remaining(k,false));if(max<=0)return 0;
             if(c.storageMode){long got=Transfer.checked(c.extract(k,max,sim),max);if(!sim){n.refundStore[side]=c;record(c,n,k,got,false);}return got;}
-            for(TileConduit source:members(c)){if(!same(n,source))continue;for(int s=0;s<6;s++){if(!source.input(s)||!source.allows(k,s))continue;Boundary b=boundary(source,s);if(b==null||b.tile==n.endpoint(side))continue;
+            int checks=0;for(TileConduit source:members(c)){if(!same(n,source))continue;for(int s=0;s<6;s++){if(++checks>ModConfig.routeComparisons)return 0;if(!source.input(s)||!source.allows(k,s))continue;Boundary b=boundary(source,s);if(b==null||b.tile==n.endpoint(side))continue;
                     long limit=Math.min(max,source.remaining(k,true));long got=Transfer.checked(b.extract(k,limit,sim),limit);if(got<=0)continue;
                     if(!sim){n.refundStore[side]=b;record(c,source,k,got,true);record(c,n,k,got,false);}return got;}}
             return 0;
         }catch(RuntimeException ex){n.uncertain(k,count,sim?"simulate-draw":"passive-draw");return 0;}finally{busy=false;}}
-    public Key first(TileConduit n,int side,boolean item){if(busy||!n.output(side))return null;Key configured=item?n.itemFilters[side]:n.fluidFilters[side];if(configured!=null)return configured;
-        TileCenter c=center(n);if(c==null||c.storageMode)return null;for(TileConduit source:members(c)){if(!same(n,source))continue;for(int s=0;s<6;s++){if(!source.input(s))continue;Boundary b=boundary(source,s);if(b==null||b.tile==n.endpoint(side))continue;
+    public Key first(TileConduit n,int side,boolean item){if(busy||!n.output(side))return null;
+        List<Key> configured=n.configured(side,item);
+        for(int i=0;i<configured.size();i++){Key k=configured.get((Math.floorMod(item?n.cursor/5:n.cursor,configured.size())+i)%configured.size());if(draw(n,side,k,1,true)>0)return k;}
+        // Explicit selections never fall back to an unselected resource.
+        if(!configured.isEmpty())return null;
+        TileCenter c=center(n);if(c==null||c.storageMode)return null;int checks=0;
+        for(TileConduit source:members(c)){if(!same(n,source))continue;for(int s=0;s<6;s++){if(++checks>ModConfig.routeComparisons)return null;if(!source.input(s))continue;Boundary b=boundary(source,s);if(b==null||b.tile==n.endpoint(side))continue;
                 for(Key k:b.samples(source.cursor,true))if((item?k.kind==Key.ITEM:k.isFluid())&&source.allows(k,s)&&b.extract(k,1,true)>0)return k;}}return null;}
     public Map<Key,Long> catalogue(TileCenter c,int group,int page){return Catalogue.list(c,group);}
     public long offerEU(TileConduit from,int face,long voltage,long amps){if(busy||voltage<=0||voltage>(8L<<28)||amps<=0||!from.input(face))return 0;busy=true;

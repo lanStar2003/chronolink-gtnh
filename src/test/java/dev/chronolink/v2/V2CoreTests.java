@@ -33,6 +33,15 @@ public final class V2CoreTests {
         check(Transfer.move(source,source,"item",16,r)==0,"self-route-not-a-transfer");
         Memory flaky=new Memory(0,64);flaky.rejectReal=true;long before=source.amount;
         check(Transfer.move(source,flaky,"item",16,r)==8&&source.amount==before-8&&flaky.amount==8&&r.retained==0,"partial-real-acceptance-is-rolled-back");
+        SelectionRevision<String> revision=new SelectionRevision<String>();
+        int firstRevision=revision.update("face0/items/page0",Arrays.asList("iron","gold"));
+        for(int i=0;i<200;i++)check(revision.update("face0/items/page0",Arrays.asList("iron","gold"))==firstRevision,"live-count-refresh-does-not-invalidate-selection");
+        check(revision.accepts(firstRevision),"unchanged-row-selection-accepted");
+        revision.update("face0/items/page0",Arrays.asList("gold","iron"));check(!revision.accepts(firstRevision),"reordered-row-selection-rejected");
+        int beforeFace=revision.update("face0/items/page0",Arrays.asList("iron"));
+        revision.update("face1/items/page0",Arrays.asList("iron"));check(!revision.accepts(beforeFace),"late-click-never-changes-new-face");
+        int beforeSearch=revision.update("face1/items/page0",Arrays.asList("iron"));
+        revision.update("face1/items/search",Arrays.asList("iron"));check(!revision.accepts(beforeSearch),"new-search-invalidates-old-selection");
         Random random=new Random(28402);for(int i=0;i<20000;i++){long a=random.nextInt(65536),cap=random.nextInt(65536);Memory f=new Memory(a,a),t=new Memory(0,cap);t.rejectReal=random.nextBoolean();Rescue rescue=new Rescue();
             long moved=Transfer.move(f,t,"native-unit",random.nextInt(100000),rescue);
             check(f.amount+t.amount+rescue.retained==a,"random-conservation");check(moved==t.amount&&moved<=cap&&f.amount>=0,"random-bounds");}

@@ -11,7 +11,6 @@ import net.minecraftforge.common.util.ForgeDirection;
 import net.minecraftforge.fluids.*;
 import cofh.api.energy.IEnergyHandler;
 import gregtech.api.interfaces.tileentity.IEnergyConnected;
-import appeng.api.networking.IGridHost;
 import dev.chronolink.ModConfig;
 import dev.chronolink.core.TickBudget;
 import dev.chronolink.core.NodeSettings;
@@ -19,13 +18,16 @@ import dev.chronolink.v2.Networks;
 import dev.chronolink.v2.core.Transfer;
 import dev.chronolink.v2.store.Key;
 import dev.chronolink.v2.store.Stock;
+import dev.chronolink.v2.store.OutputSelection;
+import java.util.ArrayList;
+import java.util.List;
 import dev.chronolink.v2.compat.VoltageProbe;
 
 /** Six auto-detected sides, simultaneous native protocols. No normal local inventory or energy buffer. */
 public final class TileConduit extends OwnedTile implements ISidedInventory,IFluidHandler,IEnergyHandler,IEnergyConnected,Transfer.Rescue<Key> {
     public static final int OFF=0,IN=1,OUT=2;
     public final int[] modes={IN,IN,IN,IN,IN,IN},tiers={-1,-1,-1,-1,-1,-1},amps=new int[6],capabilities=new int[6];
-    public final Key[] itemFilters=new Key[6],fluidFilters=new Key[6];
+    public final OutputSelection[] itemFilters=new OutputSelection[6],fluidFilters=new OutputSelection[6];
     public final TickBudget[] inbound=new TickBudget[5],outbound=new TickBudget[5];
     public final Stock rescue=new Stock();
     public int mask,cursor;
@@ -34,14 +36,14 @@ public final class TileConduit extends OwnedTile implements ISidedInventory,IFlu
     private final ItemStack[] advertised=new ItemStack[6];
     private final Key[] refundKey=new Key[6];private final long[] refundCount=new long[6],refundTick=new long[6];
     public final Transfer.Store<Key>[] refundStore;
-    @SuppressWarnings("unchecked") public TileConduit(){refundStore=(Transfer.Store<Key>[])new Transfer.Store<?>[6];for(int i=0;i<5;i++){inbound[i]=new TickBudget();outbound[i]=new TickBudget();}enabled=false;}
+    @SuppressWarnings("unchecked") public TileConduit(){refundStore=(Transfer.Store<Key>[])new Transfer.Store<?>[6];for(int i=0;i<5;i++){inbound[i]=new TickBudget();outbound[i]=new TickBudget();}for(int s=0;s<6;s++){itemFilters[s]=new OutputSelection(true);fluidFilters[s]=new OutputSelection(false);}enabled=false;}
     @Override public void placed(EntityPlayer p,ItemStack stack){super.placed(p,stack);enabled=false;Networks.INSTANCE.register(this);Networks.INSTANCE.autoBind(this);scan();}
     public TileEntity neighbor(int s){if(worldObj==null||s<0||s>=6)return null;ForgeDirection d=ForgeDirection.getOrientation(s);int x=xCoord+d.offsetX,y=yCoord+d.offsetY,z=zCoord+d.offsetZ;
         if(y<0||y>=worldObj.getHeight()||!worldObj.blockExists(x,y,z))return null;return worldObj.getTileEntity(x,y,z);}
     public static boolean internal(TileEntity t){return t instanceof OwnedTile||t instanceof dev.chronolink.tile.TileConnector;}
     public TileEntity endpoint(int s){TileEntity t=neighbor(s);return internal(t)?null:t;}
     public void scan(){int m=0;Arrays.fill(ratingTime,Long.MIN_VALUE);for(int s=0;s<6;s++){TileEntity t=neighbor(s);int c=0;
-        if(t instanceof net.minecraft.inventory.IInventory)c|=1;if(t instanceof IFluidHandler)c|=2;if(t instanceof IEnergyConnected)c|=4;if(t instanceof cofh.api.energy.IEnergyConnection)c|=8;if(t instanceof IGridHost)c|=16;
+        if(t instanceof net.minecraft.inventory.IInventory)c|=1;if(t instanceof IFluidHandler)c|=2;if(t instanceof IEnergyConnected)c|=4;if(t instanceof cofh.api.energy.IEnergyConnection)c|=8;
         capabilities[s]=c;if(c!=0||t instanceof OwnedTile)m|=1<<s;}if(m!=mask){mask=m;changed();}}
     @Override public void updateEntity(){if(worldObj==null||worldObj.isRemote)return;Networks.INSTANCE.register(this);if(now()%20==0){scan();if(network==null)Networks.INSTANCE.autoBind(this);}if(now()%10==0)worldObj.markBlockForUpdate(xCoord,yCoord,zCoord);}
     @Override public void invalidate(){Networks.INSTANCE.unregister(this);super.invalidate();}
@@ -51,10 +53,17 @@ public final class TileConduit extends OwnedTile implements ISidedInventory,IFlu
     public boolean input(int s){return s>=0&&s<6&&ready()&&modes[s]==IN;}
     public boolean output(int s){return s>=0&&s<6&&ready()&&modes[s]==OUT;}
     public boolean allows(Key k,int side){if(k==null||side<0||side>=6)return false;
-        Key f=k.kind==Key.ITEM?itemFilters[side]:k.isFluid()?fluidFilters[side]:null;
-        if(k.kind==Key.EU||k.kind==Key.RF)return true;if(f!=null)return f.equals(k);
+        if(k.kind==Key.EU||k.kind==Key.RF)return true;
+        OutputSelection f=k.kind==Key.ITEM?itemFilters[side]:fluidFilters[side];
+        if(!f.isEmpty())return f.contains(k);
         TileCenter c=center();return modes[side]!=OUT||c==null||!c.storageMode;
     }
+    public List<Key> configured(int side,boolean items){return (items?itemFilters[side]:fluidFilters[side]).keys();}
+    public List<Key> outputKeys(int side,boolean includeItems){List<Key> keys=new ArrayList<Key>();
+        if(includeItems){List<Key> items=new ArrayList<Key>(configured(side,true));if(!items.isEmpty())java.util.Collections.rotate(items,-Math.floorMod(cursor/5,items.size()));keys.addAll(items);}
+        List<Key> media=new ArrayList<Key>(configured(side,false));if(!media.isEmpty())java.util.Collections.rotate(media,-Math.floorMod(cursor,media.size()));keys.addAll(media);
+        // Each native resource budget is independent; liquid and gas intentionally share theirs.
+        keys.add(Key.RF_KEY);return keys;}
     public long limit(Key k){return k.kind==Key.ITEM?ModConfig.itemBatch:k.isFluid()?ModConfig.fluidRate:k.kind==Key.RF?ModConfig.rfRate:64;}
     private int budgetIndex(Key k){return k.kind==Key.GAS?Key.LIQUID:k.kind;}
     private long budgetTime(Key k){return k.kind==Key.ITEM?now()/5:now();}
@@ -71,11 +80,19 @@ public final class TileConduit extends OwnedTile implements ISidedInventory,IFlu
     @Override public void uncertain(Key k,long n,String phase){NBTTagCompound r=k.write();r.setLong("InFlight",n);r.setString("Phase",phase);recovery=r;fail("Uncertain external transaction; no automatic replay");}
     @Override public boolean hasContents(){return !rescue.entries.isEmpty()||recovery!=null;}
     @Override public void writeToNBT(NBTTagCompound n){super.writeToNBT(n);n.setIntArray("Modes",modes);n.setIntArray("Tiers",tiers);n.setIntArray("Amps",amps);n.setTag("Rescue",rescue.write());
-        NBTTagList filters=new NBTTagList();for(int s=0;s<6;s++){NBTTagCompound f=new NBTTagCompound();if(itemFilters[s]!=null)f.setTag("Item",itemFilters[s].write());if(fluidFilters[s]!=null)f.setTag("Fluid",fluidFilters[s].write());filters.appendTag(f);}n.setTag("Filters",filters);}
+        NBTTagList filters=new NBTTagList();for(int s=0;s<6;s++){NBTTagCompound f=new NBTTagCompound();f.setTag("Items",itemFilters[s].write());f.setTag("Media",fluidFilters[s].write());filters.appendTag(f);}n.setTag("Filters",filters);}
     @Override public void readFromNBT(NBTTagCompound n){super.readFromNBT(n);int[] m=n.getIntArray("Modes"),t=n.getIntArray("Tiers"),a=n.getIntArray("Amps");
         for(int s=0;s<6;s++){modes[s]=s<m.length?Math.max(0,Math.min(2,m[s])):IN;tiers[s]=s<t.length?Math.max(-1,Math.min(14,t[s])):-1;amps[s]=s<a.length?Math.max(0,Math.min(64,a[s])):0;}
-        NBTTagList f=n.getTagList("Filters",10);for(int s=0;s<6;s++){NBTTagCompound tag=s<f.tagCount()?f.getCompoundTagAt(s):new NBTTagCompound();itemFilters[s]=tag.hasKey("Item",10)?Key.read(tag.getCompoundTag("Item")):null;fluidFilters[s]=tag.hasKey("Fluid",10)?Key.read(tag.getCompoundTag("Fluid")):null;}
-        try{rescue.read(n.getTagList("Rescue",10));}catch(RuntimeException e){recovery=(NBTTagCompound)n.copy();fault="Unknown saved recovery data";enabled=false;}
+        try{NBTTagList f=n.getTagList("Filters",10);if(f.tagCount()>6)throw new IllegalArgumentException("Invalid saved filter sides");
+            for(int s=0;s<6;s++){NBTTagCompound tag=s<f.tagCount()?f.getCompoundTagAt(s):new NBTTagCompound();
+                itemFilters[s].clear();fluidFilters[s].clear();
+                if(tag.hasKey("Items",9))itemFilters[s].read(tag.getTagList("Items",10));
+                else if(tag.hasKey("Item",10)&&!itemFilters[s].replace(Key.read(tag.getCompoundTag("Item"))))throw new IllegalArgumentException("Unknown legacy item filter");
+                if(tag.hasKey("Media",9))fluidFilters[s].read(tag.getTagList("Media",10));
+                else if(tag.hasKey("Fluid",10)&&!fluidFilters[s].replace(Key.read(tag.getCompoundTag("Fluid"))))throw new IllegalArgumentException("Unknown legacy fluid filter");
+            }
+            rescue.read(n.getTagList("Rescue",10));
+        }catch(RuntimeException e){recovery=(NBTTagCompound)n.copy();fault="Unknown saved selection or recovery data";enabled=false;}
         if(hasContents())enabled=false;}
     @Override public NBTTagCompound visual(){NBTTagCompound n=super.visual();n.setInteger("Mask",mask);n.setIntArray("Modes",modes);return n;}
     @Override public void readVisual(NBTTagCompound n){super.readVisual(n);mask=n.getInteger("Mask")&63;int[] a=n.getIntArray("Modes");for(int i=0;i<Math.min(6,a.length);i++)modes[i]=a[i];}
