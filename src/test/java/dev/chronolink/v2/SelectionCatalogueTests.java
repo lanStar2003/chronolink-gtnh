@@ -7,15 +7,30 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.fluids.*;
 import dev.chronolink.v2.store.*;
-import dev.chronolink.v2.tile.TileConduit;
+import net.minecraft.tileentity.TileEntity;
 
 /** Production selection, catalogue and conduit save data; real MC/Forge value objects, no world. */
 public final class SelectionCatalogueTests {
     private static int checks;
     private static void check(boolean value,String name){if(!value)throw new AssertionError(name);checks++;}
     public static void run(){
+        try { runNative(); } catch (ReflectiveOperationException failure) { throw new AssertionError("Production conduit contract failed",failure); }
+    }
+    private static OutputSelection filters(TileEntity tile,String name,int side) throws ReflectiveOperationException {
+        return ((OutputSelection[])tile.getClass().getField(name).get(tile))[side];
+    }
+    @SuppressWarnings("unchecked") private static List<Key> output(TileEntity tile,int side,boolean items) throws ReflectiveOperationException {
+        return (List<Key>)tile.getClass().getMethod("outputKeys",int.class,boolean.class).invoke(tile,side,items);
+    }
+    private static boolean allows(TileEntity tile,Key key,int side) throws ReflectiveOperationException {
+        return (Boolean)tile.getClass().getMethod("allows",Key.class,int.class).invoke(tile,key,side);
+    }
+    private static void runNative() throws ReflectiveOperationException {
+        // The existing runner adds the real compile-only GT/RF jars at runtime. Public reflection
+        // avoids making this test's compile classpath depend on their complete type hierarchies.
+        Class<? extends TileEntity> type=Class.forName("dev.chronolink.v2.tile.TileConduit").asSubclass(TileEntity.class);
         // Vanilla NBT serialization needs the same real tile mapping registered by the mod.
-        cpw.mods.fml.common.registry.GameRegistry.registerTileEntity(TileConduit.class,"chronolink:conduit_v2");
+        cpw.mods.fml.common.registry.GameRegistry.registerTileEntity(type,"chronolink:conduit_v2");
         Key iron=Key.of(new ItemStack(Items.iron_ingot)),gold=Key.of(new ItemStack(Items.gold_ingot));
         Fluid gas=new Fluid("chronolink_selection_gas").setGaseous(true);FluidRegistry.registerFluid(gas);
         Key water=Key.of(new FluidStack(FluidRegistry.WATER,1)),steam=Key.of(new FluidStack(gas,1));
@@ -32,16 +47,16 @@ public final class SelectionCatalogueTests {
         OutputSelection loaded=new OutputSelection(true);loaded.read(items.write());check(loaded.keys().equals(items.keys()),"multi-target NBT round trip");
         NBTTagList bad=new NBTTagList();bad.appendTag(water.write());
         try{loaded.read(bad);throw new AssertionError("invalid filter accepted");}catch(IllegalArgumentException expected){check(loaded.keys().equals(items.keys()),"bad save cannot partially replace selection");}
-        TileConduit conduit=new TileConduit();conduit.itemFilters[0].replace(iron);conduit.itemFilters[0].toggle(gold);conduit.fluidFilters[0].replace(water);conduit.fluidFilters[0].toggle(steam);
-        NBTTagCompound saved=new NBTTagCompound();conduit.writeToNBT(saved);TileConduit restored=new TileConduit();restored.readFromNBT(saved);
-        check(restored.configured(0,true).equals(Arrays.asList(iron,gold))&&restored.configured(0,false).equals(Arrays.asList(water,steam)),"real conduit multi-selection save/load");
-        check(restored.allows(water,0)&&restored.allows(steam,0)&&restored.allows(Key.EU_KEY,0)&&restored.allows(Key.RF_KEY,0),"native energy unaffected by simultaneous media filters");
+        TileEntity conduit=type.getConstructor().newInstance();filters(conduit,"itemFilters",0).replace(iron);filters(conduit,"itemFilters",0).toggle(gold);filters(conduit,"fluidFilters",0).replace(water);filters(conduit,"fluidFilters",0).toggle(steam);
+        NBTTagCompound saved=new NBTTagCompound();conduit.writeToNBT(saved);TileEntity restored=type.getConstructor().newInstance();restored.readFromNBT(saved);
+        check(filters(restored,"itemFilters",0).keys().equals(Arrays.asList(iron,gold))&&filters(restored,"fluidFilters",0).keys().equals(Arrays.asList(water,steam)),"real conduit multi-selection save/load");
+        check(allows(restored,water,0)&&allows(restored,steam,0)&&allows(restored,Key.EU_KEY,0)&&allows(restored,Key.RF_KEY,0),"native energy unaffected by simultaneous media filters");
         NBTTagCompound legacy=new NBTTagCompound(),side=new NBTTagCompound();side.setTag("Item",iron.write());side.setTag("Fluid",water.write());NBTTagList sides=new NBTTagList();sides.appendTag(side);legacy.setTag("Filters",sides);
-        TileConduit upgraded=new TileConduit();upgraded.readFromNBT(legacy);check(upgraded.configured(0,true).equals(Arrays.asList(iron))&&upgraded.configured(0,false).equals(Arrays.asList(water)),"alpha1 single filters migrate without resetting data");
-        conduit.itemFilters[1].clear();for(int i=0;i<5;i++)conduit.itemFilters[1].toggle(variants.get(i));Set<Key> firsts=new HashSet<Key>();
-        for(int i=0;i<5;i++){conduit.cursor=i*5;firsts.add(conduit.outputKeys(1,true).get(0));}
+        TileEntity upgraded=type.getConstructor().newInstance();upgraded.readFromNBT(legacy);check(filters(upgraded,"itemFilters",0).keys().equals(Arrays.asList(iron))&&filters(upgraded,"fluidFilters",0).keys().equals(Arrays.asList(water)),"alpha1 single filters migrate without resetting data");
+        filters(conduit,"itemFilters",1).clear();for(int i=0;i<5;i++)filters(conduit,"itemFilters",1).toggle(variants.get(i));Set<Key> firsts=new HashSet<Key>();
+        for(int i=0;i<5;i++){type.getField("cursor").setInt(conduit,i*5);firsts.add(output(conduit,1,true).get(0));}
         check(firsts.size()==5,"five-tick item cadence cannot starve five selected resources");
-        conduit.cursor=0;Key first=conduit.outputKeys(0,false).get(0);conduit.cursor=1;check(!first.equals(conduit.outputKeys(0,false).get(0)),"liquid gas first choice rotates");
+        type.getField("cursor").setInt(conduit,0);Key first=output(conduit,0,false).get(0);type.getField("cursor").setInt(conduit,1);check(!first.equals(output(conduit,0,false).get(0)),"liquid gas first choice rotates");
         Map<Key,Long> stock=new LinkedHashMap<Key,Long>();stock.put(gold,8L);stock.put(iron,12L);
         CatalogueView.Page page=CatalogueView.page(stock,Collections.<Key>emptyList(),Collections.<Key>emptyList(),0,"MINECRAFT:IRON",0);
         check(page.total==1&&page.rows.get(0).key.equals(iron),"registry ID search is case insensitive");
