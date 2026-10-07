@@ -14,6 +14,8 @@ import net.minecraftforge.fluids.*;
 import dev.chronolink.v2.Networks;
 import dev.chronolink.v2.core.RelayMath;
 import dev.chronolink.v2.core.SelectionRevision;
+import dev.chronolink.v2.core.SideConfiguration;
+import dev.chronolink.v2.core.UiActionBudget;
 import dev.chronolink.v2.store.*;
 import dev.chronolink.v2.tile.*;
 import dev.chronolink.v2.net.Packets;
@@ -24,7 +26,8 @@ public final class NetworkContainer extends Container {
     private int face,tab,page;
     private String query="",notice="";
     private final SelectionRevision<Key> selectionRevision=new SelectionRevision<Key>();
-    private long lastSend=Long.MIN_VALUE,lastAction=Long.MIN_VALUE;
+    private final UiActionBudget actionBudget=new UiActionBudget();
+    private long lastSend=Long.MIN_VALUE;
     private final List<Key> rows=new ArrayList<Key>();
     public NetworkContainer(InventoryPlayer inv,OwnedTile tile){this.tile=tile;int x=tile instanceof TileCenter?140:76;
         if(tile instanceof TileCenter){final TileCenter c=(TileCenter)tile;for(int i=0;i<3;i++){final int slot=i;addSlotToContainer(new Slot(c,i,14+i*34,163){
@@ -35,9 +38,14 @@ public final class NetworkContainer extends Container {
         for(int col=0;col<9;col++)addSlotToContainer(new Slot(inv,col,x+col*18,206));}
     @Override public boolean canInteractWith(EntityPlayer p){return tile.inRange(p)&&(tile.getWorldObj()!=null&&tile.getWorldObj().isRemote||tile.loaded()&&tile.mayEdit(p));}
     public void action(EntityPlayer p,int id,int rev,String text){
-        if(!Packets.validAction(id)||tile.getWorldObj()==null||tile.getWorldObj().isRemote||p.openContainer!=this||!canInteractWith(p)||lastAction==tile.now())return;
-        lastAction=tile.now();notice="";
-        if(id>=200&&id<206){
+        if(!Packets.validAction(id)||tile.getWorldObj()==null||tile.getWorldObj().isRemote||p.openContainer!=this||!canInteractWith(p)||!actionBudget.allow(tile.now()))return;
+        notice="";
+        if(SideConfiguration.isSideAction(id)){
+            if(tab!=0||!(tile instanceof TileConduit)||!tile.fault.isEmpty()||tile.recovery!=null)return;
+            TileConduit n=(TileConduit)tile;
+            if(!SideConfiguration.apply(n.modes,id))return;
+            face=SideConfiguration.face(id);n.changedSettings();notifyNeighbors();
+        }else if(id>=200&&id<206){
             if(tab==0||!selectionRevision.accepts(rev)||id-200>=rows.size()||!(tile instanceof TileConduit)||!tile.fault.isEmpty()||tile.recovery!=null)return;
             TileConduit n=(TileConduit)tile;Key key=rows.get(id-200);
             OutputSelection set=key.kind==Key.ITEM?n.itemFilters[face]:n.fluidFilters[face];
@@ -82,13 +90,14 @@ public final class NetworkContainer extends Container {
         NBTTagCompound n;
         try{n=snapshot();display=n;}
         catch(RuntimeException ex){
-            // A read-only label/catalogue failure must NOT quarantine the real resource network.
             rows.clear();selectionRevision.update("unavailable",rows);
             n=(NBTTagCompound)display.copy();n.setString("Warning","目录暂不可读取："+ex.getClass().getSimpleName());n.setBoolean("Stale",true);n.setTag("Rows",new NBTTagList());
         }
         for(Object c:crafters)if(c instanceof EntityPlayerMP)Packets.channel.sendTo(new Packets.Snapshot(windowId,n),(EntityPlayerMP)c);}
     public NBTTagCompound snapshot(){
         NBTTagCompound out=new NBTTagCompound();out.setInteger("Face",face);out.setInteger("Tab",tab);out.setInteger("Page",page);out.setBoolean("Enabled",tile.enabled);out.setString("Fault",tile.fault);out.setString("Warning",notice);out.setBoolean("Center",tile instanceof TileCenter);out.setString("Query",query);
+        // In*/Out* remain unmodified, actual 20-tick totals; EU/RF conversion is display-only.
+        out.setInteger("RateWindowTicks",20);
         TileCenter c=tile instanceof TileCenter?(TileCenter)tile:((TileConduit)tile).center();
         out.setString("Network",c==null?"未选择 / 中心未加载":c.name);out.setBoolean("Online",c!=null&&c.active());out.setBoolean("Storage",c!=null&&c.storageMode);
         rows.clear();if(c!=null){
@@ -110,6 +119,9 @@ public final class NetworkContainer extends Container {
         if(tile instanceof TileConduit){TileConduit n=(TileConduit)tile;out.setIntArray("Modes",n.modes);out.setIntArray("Protocols",n.capabilities);out.setInteger("Mask",n.mask);out.setInteger("Tier",n.tiers[face]);out.setInteger("Amps",n.amps[face]);
             out.setString("Item",n.itemFilters[face].label());out.setString("Fluid",n.fluidFilters[face].label());out.setInteger("ItemCount",n.itemFilters[face].size());out.setInteger("FluidCount",n.fluidFilters[face].size());
             try{out.setLong("Voltage",n.voltage(face));out.setString("Rating",n.rating(face).reason);out.setLong("RatedAmps",n.amperage(face));}catch(RuntimeException ex){out.setString("Rating","unknown");}
+            NBTTagList neighbors=new NBTTagList();for(int s=0;s<6;s++){NBTTagCompound entry=new NBTTagCompound();String label="无可识别端口";
+                try{net.minecraft.tileentity.TileEntity other=n.neighbor(s);if(TileConduit.internal(other))label="本网络设备";else if(other!=null)label=other instanceof net.minecraft.inventory.IInventory?((net.minecraft.inventory.IInventory)other).getInventoryName():other.getBlockType().getLocalizedName();}
+                catch(RuntimeException ex){label="端口名称暂不可用";}entry.setString("Name",label==null?"未命名端口":label);neighbors.appendTag(entry);}out.setTag("Neighbors",neighbors);
             out.setBoolean("Recovery",n.hasContents());
         }
         String context=face+":"+tab+":"+page+":"+query+":"+String.valueOf(tile.network);
