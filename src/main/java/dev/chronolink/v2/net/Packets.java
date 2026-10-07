@@ -11,6 +11,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTTagCompound;
 import dev.chronolink.ChronoLink;
 import dev.chronolink.v2.gui.NetworkContainer;
+import dev.chronolink.v2.core.SideConfiguration;
 
 /** Display-only snapshots and allow-listed GUI actions for this Minecraft mod. */
 public final class Packets {
@@ -19,7 +20,7 @@ public final class Packets {
     private static final AtomicInteger queued=new AtomicInteger();
     private Packets(){}
     public static void init(){channel=NetworkRegistry.INSTANCE.newSimpleChannel("chronolink-v2");channel.registerMessage(SnapshotHandler.class,Snapshot.class,0,Side.CLIENT);channel.registerMessage(ActionHandler.class,Action.class,1,Side.SERVER);}
-    public static boolean validAction(int id){return id>=0&&id<=17||id>=100&&id<=105||id>=200&&id<=205;}
+    public static boolean validAction(int id){return id>=0&&id<=18||id>=100&&id<=105||id>=200&&id<=205||SideConfiguration.isSideAction(id);}
     public static void clear(){requests.clear();queued.set(0);}
     public static final class Snapshot implements IMessage {
         public int window;public NBTTagCompound data;

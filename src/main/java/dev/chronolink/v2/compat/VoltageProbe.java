@@ -20,6 +20,10 @@ public final class VoltageProbe {
         public Rating(long v,long a,String r){voltage=v;amps=a;reason=r;}
     }
     private static MTECable cable(TileEntity t){if(t instanceof IGregTechTileEntity && ((IGregTechTileEntity)t).getMetaTileEntity() instanceof MTECable)return (MTECable)((IGregTechTileEntity)t).getMetaTileEntity();return null;}
+    private static boolean connected(TileEntity tile,ForgeDirection side){
+        Object meta=tile instanceof IGregTechTileEntity?((IGregTechTileEntity)tile).getMetaTileEntity():null;
+        return meta instanceof gregtech.api.interfaces.metatileentity.IConnectable && ((gregtech.api.interfaces.metatileentity.IConnectable)meta).isConnectedAtSide(side);
+    }
     public static Rating inspect(TileEntity target,ForgeDirection side){
         if(!(target instanceof IEnergyConnected)||!((IEnergyConnected)target).inputEnergyFrom(side))return new Rating(0,0,"not-input");
         MTECable first=cable(target);
@@ -30,9 +34,9 @@ public final class VoltageProbe {
             TileEntity t=queue.remove();if(!seen.add(t))continue;if(seen.size()>256){unknown=true;break;}
             MTECable c=cable(t);if(c==null)continue;voltage=Math.min(voltage,c.mVoltage);amps=Math.min(amps,c.mAmperage);
             World w=t.getWorldObj();if(w==null){unknown=true;break;}
-            for(ForgeDirection d:ForgeDirection.VALID_DIRECTIONS){int x=t.xCoord+d.offsetX,y=t.yCoord+d.offsetY,z=t.zCoord+d.offsetZ;
+            for(ForgeDirection d:ForgeDirection.VALID_DIRECTIONS){if(!connected(t,d))continue;int x=t.xCoord+d.offsetX,y=t.yCoord+d.offsetY,z=t.zCoord+d.offsetZ;
                 if(y<0||y>=w.getHeight())continue;if(!w.blockExists(x,y,z)){unknown=true;continue;}TileEntity n=w.getTileEntity(x,y,z);
-                if(n instanceof TileConduit)continue;if(cable(n)!=null){queue.add(n);continue;}
+                if(n instanceof TileConduit)continue;if(cable(n)!=null){if(connected(n,d.getOpposite()))queue.add(n);continue;}
                 if(n instanceof IEnergyConnected && ((IEnergyConnected)n).inputEnergyFrom(d.getOpposite())){
                     if(n instanceof IBasicEnergyContainer){long v=((IBasicEnergyContainer)n).getInputVoltage();if(v>0){consumer=true;voltage=Math.min(voltage,v);}else unknown=true;}
                     else unknown=true;

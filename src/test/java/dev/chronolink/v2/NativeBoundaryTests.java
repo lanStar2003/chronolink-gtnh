@@ -14,6 +14,11 @@ import dev.chronolink.v2.store.*;
 public final class NativeBoundaryTests {
     private static int checks;
     private static void check(boolean b,String name){if(!b)throw new AssertionError(name);checks++;}
+    private static final class RepeatedSlots extends TileEntityChest implements net.minecraft.inventory.ISidedInventory {
+        public int[] getAccessibleSlotsFromSide(int side){return new int[]{0,0,-1,999999};}
+        public boolean canInsertItem(int slot,ItemStack stack,int side){return true;}
+        public boolean canExtractItem(int slot,ItemStack stack,int side){return true;}
+    }
     public static void run(){
         TileEntityChest source=new TileEntityChest(),dest=new TileEntityChest();
         ItemStack sample=new ItemStack(Items.iron_ingot,64);sample.setTagCompound(new NBTTagCompound());sample.stackTagCompound.setString("serial","must-survive");
@@ -35,6 +40,10 @@ public final class NativeBoundaryTests {
         check(Transfer.move(fa,fb,water,400,rescue)==100,"actual Forge tanks partial capacity");
         check(a.drain(ForgeDirection.UP,1000,false).amount==500&&b.drain(ForgeDirection.DOWN,1000,false).amount==1000,"actual Forge tank conservation");
         check(Transfer.move(fa,fb,water,400,rescue)==0&&a.drain(ForgeDirection.UP,1000,false).amount==500,"full tank never drains source");
+        RepeatedSlots repeated=new RepeatedSlots();Key plain=Key.of(new ItemStack(Items.iron_ingot));Boundary rb=new Boundary(repeated,ForgeDirection.UP);
+        repeated.setInventorySlotContents(0,new ItemStack(Items.iron_ingot,5));check(rb.extract(plain,64,true)==5,"duplicate sided slot not double-counted in simulation");
+        repeated.setInventorySlotContents(0,new ItemStack(Items.iron_ingot,60));check(rb.insert(plain,8,true)==4,"duplicate sided slot cannot advertise double capacity");
+        check(rb.insert(plain,8,false)==4&&repeated.getStackInSlot(0).stackSize==64,"invalid and repeated native slots safely normalized");
         System.out.println("PASS actual vanilla chest/furnace and Forge tank adapter contracts: "+checks+" checks. No world or modpack launched.");
     }
 }
