@@ -14,6 +14,8 @@ public final class SelectionCatalogueTests {
     private static int checks;
     private static void check(boolean value,String name){if(!value)throw new AssertionError(name);checks++;}
     public static void run(){
+        // Vanilla NBT serialization needs the same real tile mapping registered by the mod.
+        cpw.mods.fml.common.registry.GameRegistry.registerTileEntity(TileConduit.class,"chronolink:conduit_v2");
         Key iron=Key.of(new ItemStack(Items.iron_ingot)),gold=Key.of(new ItemStack(Items.gold_ingot));
         Fluid gas=new Fluid("chronolink_selection_gas").setGaseous(true);FluidRegistry.registerFluid(gas);
         Key water=Key.of(new FluidStack(FluidRegistry.WATER,1)),steam=Key.of(new FluidStack(gas,1));
